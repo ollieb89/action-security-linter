@@ -1,0 +1,21 @@
+name: 'GitHub Action Security Linter'
+description: 'Scans action.yml and workflows for script injection risks (e.g. ${{ github.event... }} in run steps).'
+author: 'ollieb89'
+inputs:
+  path:
+    description: 'Path to scan (defaults to workspace)'
+    required: false
+    default: '.'
+  fail-on-error:
+    description: 'Fail the workflow if security risks are found'
+    required: false
+    default: 'true'
+outputs:
+  risks-found:
+    description: 'Number of security risks found'
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+branding:
+  icon: 'shield'
+  color: 'red'
