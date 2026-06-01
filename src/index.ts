@@ -1,40 +1,57 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as yaml from 'js-yaml';
+import { lintAction, LintResult } from './linter';
 
 async function run() {
   try {
-    const scanPath = core.getInput('path') || '.';
+    const scanPath = core.getInput('path') || 'action.yml';
     const failOnError = core.getInput('fail-on-error') === 'true';
     
-    let risksFound = 0;
-    const files = findYmlFiles(scanPath);
-    
-    for (const file of files) {
-      const content = fs.readFileSync(file, 'utf8');
-      try {
-        const data = yaml.load(content) as any;
-        const risks = scanForRisks(data, file);
-        risksFound += risks.length;
-        
-        for (const risk of risks) {
-          core.error(`Security Risk in ${file}: ${risk}`);
+    let allResults: LintResult[] = [];
+
+    if (fs.existsSync(scanPath)) {
+      const stats = fs.statSync(scanPath);
+      if (stats.isDirectory()) {
+        const files = findYmlFiles(scanPath);
+        for (const file of files) {
+          const content = fs.readFileSync(file, 'utf8');
+          allResults = allResults.concat(lintAction(content, file));
         }
-      } catch (e) {
-        core.warning(`Could not parse YAML in ${file}: ${e}`);
+      } else {
+        const content = fs.readFileSync(scanPath, 'utf8');
+        allResults = allResults.concat(lintAction(content, scanPath));
+      }
+    } else {
+      core.warning(`Path not found: ${scanPath}`);
+    }
+
+    let errors = 0;
+    let warnings = 0;
+
+    for (const res of allResults) {
+      const msg = `[${res.severity.toUpperCase()}] ${res.file}${res.path ? ' @ ' + res.path : ''}: ${res.message}`;
+      if (res.severity === 'error') {
+        core.error(msg);
+        errors++;
+      } else if (res.severity === 'warning') {
+        core.warning(msg);
+        warnings++;
+      } else {
+        core.info(msg);
       }
     }
 
-    core.setOutput('risks-found', risksFound);
-    
-    if (risksFound > 0 && failOnError) {
-      core.setFailed(`Found ${risksFound} security risks.`);
-    } else if (risksFound > 0) {
-      core.warning(`Found ${risksFound} security risks.`);
+    core.setOutput('errors', errors);
+    core.setOutput('warnings', warnings);
+    core.setOutput('results', JSON.stringify(allResults));
+
+    if (errors > 0 && failOnError) {
+      core.setFailed(`Found ${errors} security errors.`);
     } else {
-      core.info('No security risks found.');
+      core.info(`Scan complete. Errors: ${errors}, Warnings: ${warnings}`);
     }
+
   } catch (error: any) {
     core.setFailed(error.message);
   }
@@ -53,31 +70,6 @@ function findYmlFiles(dir: string, fileList: string[] = []): string[] {
     }
   }
   return fileList;
-}
-
-function scanForRisks(data: any, fileName: string): string[] {
-  const risks: string[] = [];
-  
-  // Pattern for unsanitized github context in run steps
-  const injectionPattern = /\$\\{\\{\s*github\.event\..*?\\\}\s*\}/;
-
-  // Simple recursive scan for 'run' keys
-  function traverse(obj: any) {
-    if (!obj || typeof obj !== 'object') return;
-    
-    if (obj.run && typeof obj.run === 'string') {
-      if (injectionPattern.test(obj.run)) {
-        risks.push(`Potential script injection in 'run' step: ${obj.run.substring(0, 50)}...`);
-      }
-    }
-    
-    for (const key in obj) {
-      traverse(obj[key]);
-    }
-  }
-
-  traverse(data);
-  return risks;
 }
 
 run();
